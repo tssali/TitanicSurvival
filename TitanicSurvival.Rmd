@@ -1,0 +1,172 @@
+---
+title: "Survival Rates on the Titanic"
+author: "Tracy Ssali"
+date: "18/08/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Introduction
+In this project we analyze the Training Titanic Data set and produce some predictions on the survival rates on Test Data based on PClass, Sex, Age, Fare, SibSp. 
+
+The visualizations generated with the Test and Training data are similar suggesting that the model provides a good estimate of the trend observed in the Training data set.
+
+
+# (1) Load and Summarize the Data
+```{r Load and Summarize Data, echo=F}
+Train <- read.csv("train.csv")
+Test <- read.csv("test.csv")
+
+str(Train)
+summary(Train)
+```
+
+First we used str to display the internal structure of the data. Here we can see all the columns that are included in the data set and their types. Next summary is used to provide a summary of all the columns.
+
+# (2) Clean the data
+```{r Cleanning data}
+# Check for na values 
+apply(Train, 2, function(x) any(is.na(x)))
+apply(Test, 2, function(x) any(is.na(x)))
+
+# Provide a count of the number of NA values in the test and training data
+table(is.na(Train$Age))
+table(is.na(Test$Age))
+
+# Histogram of the data
+hist(Train$Age, main="Histogram of Training Data with NA removed")
+hist(Test$Age, main="Histogram of Test Data with NA removed")
+
+# fill in missing values for Age by replacing them with the mean age
+Train$Age[is.na(Train$Age)] <-  mean(Train$Age, na.rm = TRUE)
+Test$Age[is.na(Test$Age)] <-  mean(Test$Age, na.rm = TRUE)
+
+# Remove rows with missing Fare values
+Test <- Test[!is.na(Test$Fare),]
+
+# Visualize the resulting distribution of ages
+hist(Train$Age, main = "Histogram of Training Data with NA replaced with mean")
+hist(Test$Age, main = "Histogram of Test Data with NA replaced with mean")
+
+```
+
+Approximately 20% of the Age values in the training and test data sets are NA. Since the Age data is normally distributed, we addressed this by replacing the NA values with the respective mean of the Training/Test data. The resulting distribution of Ages remains approximately normal. The participant from the Test data set with missing Fare data was removed from further analysis.
+
+# (3) Explore the Data
+```{r Exploring data}
+# Create DataFrame of independent/dependent variables 
+nonvars <-  c("PassengerId","Name","Ticket","Embarked","Cabin")
+Train_Short <-Train[,!(names(Train) %in% nonvars)]
+
+# Average metrics of the survivors
+Train_Short %>% 
+  group_by(Survived) %>% 
+  summarise(across(c("Age", "Fare"), mean))
+
+# Counts for categorical variables
+xtabs(~Survived+Parch, Train)
+xtabs(~Survived+SibSp, Train)
+xtabs(~Survived+Sex, Train)
+xtabs(~Survived+Pclass, Train)
+
+```
+
+
+Out of 12 variables, 5 variables were excluded from the analysis. Average metrics of the people who survived (1) and did not survive (0), suggest that: 1. The average age of survivors was younger, 2. The average fare of survivors was higher. Looking at the counts of the categorical variables, 1. For parents with greater than 4 children, parents with fewer children survived, 2. For passengers with fewer than 2 siblings/spouse, survival was higher for those who had fewer siblings/spouse, 3. A larger portion of women survived, 4. People in higher classes (i.e. first class) were more likely to survive. This is in line with the observation that people who paid higher fares were more likely to survive. Further statistical analysis is required to elucidate if these factors significantly contribute to the overall survival. 
+
+# (4) Visualize the Training data
+```{r Visualize Factors}
+ggplot(data=Train_Short, aes(x=Age, y=as.factor(Survived), color=Sex)) +
+  geom_jitter(height=0.1) +
+  theme_classic() +
+  ylab("Survived")
+  
+```
+
+The above plot shows the distribution of ages of male and female passengers that survived/deseased on the titanic. What is apparent based on this plot is that (1) female passengers appear to be younger than then their male counterparts and (2) in agreement with the previous counts, the majority of deceased passengers were male.
+
+# (5) Creating the Model
+```{r Logistic Regression}
+# Build a Logistic Regression Model
+TitanicLog = glm(Survived~., data = Train_Short, family = binomial)
+summary(TitanicLog)
+
+# Logistic regression with extra factors removed
+TitanicLog.alt = glm(Survived~., data = Train_Short[,!(names(Train_Short) %in% c("Parch", "Fare"))], family = binomial)
+AIC(TitanicLog.alt, TitanicLog)
+```
+
+
+A binary logistic regression model was developed based on the survival status of the passengers. (1 survived, 0 didn’t survive). The model estimates were significant for: Pclass (Passenger Class), Sex, Age, SibSp (Number of Spouse/Siblings aboard the ship). This is in agreement with the previous analysis based on the counts/averages.
+
+Estimates were not significant for the Parch (Parents "n" with Children) and Fare. It is interesting the Fare was not a significant factor in determining whether an individual survives or not. A possible reason for this is that there is some shared variance (covariance) with the Pclass variable since higher class cabins probably paid more for their tickets.
+
+The resulting model of the logistic regression is:
+Survival probability = 4.96-1.08Pclass-2.76 Sexmale-0.04*Age-0.35SibSp-0.061937*Parch+0.002160 *Fare 
+
+after excluding Parch and fare: 
+Survival probability = 4.96-1.08Pclass-2.76 Sexmale-0.04*Age-0.35SibSp 
+
+While these two factors could be removed from the model, based on Akaike's Information Criterion (AIC) (an indicator of the quality of the fit of the model) it appears that removal of these two factors does not substantially reduce the value. 
+
+# (6) Predictions based on the Model
+```{r Prediction based on Test Data}
+# Use Model to predict survivability for Test Data
+predictTest = predict(TitanicLog, type = "response", newdata = Test)
+
+# no preference over error t = 0.5
+Test$pred_Survived = as.numeric(predictTest >= 0.5)
+table(Test$pred_Survived)
+
+# Predictions = data.frame(Test[c("PassengerId","pred_Survived")])
+# write.csv(file = "TitaniTestPred.csv", x = Predictions)
+
+```
+
+
+The model was applied to the test data and 0.5 was used as a cutoff point. Using the test data, the model predicted that 155 survived and 262 did not.
+
+# (7) Visualize predicted survival based on Test data
+```{r Visualize Prediction}
+ggplot(data=Test, aes(x=Age, y=as.factor(pred_Survived), color=Sex)) +
+  geom_jitter(height=0.1) +
+  theme_classic() +
+  ylab("Survived")
+
+Test %>% 
+  group_by(pred_Survived) %>% 
+  summarise(across(c("Age"), mean))
+  
+```
+
+
+Since there were no labels in the test dataset, it is not possible to quantify the accuracy of the model. As a crude alternative, we compared the distribution of survivors/deceased for males/females across ages with the test data to the previously generated plot with the training data. Similar to the training data, the logistic regression model test predicts that the majority of survivors are also female and that the average age of survivors was younger, suggesting that the model is promising. 
+
+Future work could be to use a subset of the training data to evaluate the model. Additionally, feature engineering can be used to extract information from some of the other variables that have been excluded (for example cabin, ticket).
+
+# Future Work
+Since the test data does not have any labels, to assess the accuracy the training data was partitioned into test and training.
+```{r}
+
+Train_partition <- createDataPartition(y=Train$PassengerId, p=0.7, list=F)
+Train_part <- Train_Short[Train_partition,]
+Test_part <- Train_Short[-Train_partition,]
+
+# nonvars <-  c("PassengerId","Name","Ticket","Embarked","Cabin")
+# Train_Short <-Train[,!(names(Train) %in% nonvars)]
+
+TitanicLog <- glm(Survived~., data = Train_part, family = binomial)
+predictTest <-  predict(TitanicLog, type = "response", newdata = Test_part)
+
+# no preference over error t = 0.5
+Test_part$pred_Survived = as.numeric(predictTest >= 0.5)
+table(Test_part$pred_Survived)
+
+cm<-confusionMatrix(as.factor(Test_part$Survived),as.factor(Test_part$pred_Survived))
+Accuracy<-round(cm$overall[1],2)
+```
+
